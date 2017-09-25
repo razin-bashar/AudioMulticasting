@@ -3,19 +3,19 @@
 #include "TcpServer.h"
 #include <thread>
 
-TcpServer::TcpServer()
+TcpServer::TcpServer(char* pport)
 {
+	port = pport;
 }
 
-int TcpServer::Initialize(char* port){
+int TcpServer::Initialize(){
 	int iResult;
-
 
 
 	// Initialize Winsock
 	iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
 	if (iResult != 0) {
-		printf("WSAStartup failed with error: %d\n", iResult);
+		printf("TCPServer WSAStartup failed with error: %d\n", iResult);
 		return 1;
 	}
 
@@ -28,7 +28,7 @@ int TcpServer::Initialize(char* port){
 	// Resolve the server address and port
 	iResult = getaddrinfo(NULL, port, &hints, &result);
 	if (iResult != 0) {
-		printf("getaddrinfo failed with error: %d\n", iResult);
+		printf("TCPServer getaddrinfo failed with error: %d\n", iResult);
 		WSACleanup();
 		return 1;
 	}
@@ -36,7 +36,7 @@ int TcpServer::Initialize(char* port){
 	// Create a SOCKET for connecting to server
 	ListenSocket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
 	if (ListenSocket == INVALID_SOCKET) {
-		printf("socket failed with error: %ld\n", WSAGetLastError());
+		printf("TCPServer socket failed with error: %ld\n", WSAGetLastError());
 		freeaddrinfo(result);
 		WSACleanup();
 		return 1;
@@ -45,7 +45,7 @@ int TcpServer::Initialize(char* port){
 	// Setup the TCP listening socket
 	iResult = bind(ListenSocket, result->ai_addr, (int)result->ai_addrlen);
 	if (iResult == SOCKET_ERROR) {
-		printf("bind failed with error: %d\n", WSAGetLastError());
+		printf("TCPServer bind failed with error: %d\n", WSAGetLastError());
 		freeaddrinfo(result);
 		closesocket(ListenSocket);
 		WSACleanup();
@@ -56,7 +56,7 @@ int TcpServer::Initialize(char* port){
 
 	iResult = listen(ListenSocket, SOMAXCONN);
 	if (iResult == SOCKET_ERROR) {
-		printf("listen failed with error: %d\n", WSAGetLastError());
+		printf("TCPServer listen failed with error: %d\n", WSAGetLastError());
 		closesocket(ListenSocket);
 		WSACleanup();
 		return 1;
@@ -69,27 +69,31 @@ SOCKET TcpServer::WaitForConnect(){
 	sockaddr* temp = NULL;
 	ClientSocket = accept(ListenSocket, temp, 0);
 	if (ClientSocket == INVALID_SOCKET) {
-		printf("accept failed with error: %d\n", WSAGetLastError());
-		closesocket(ListenSocket);
-		WSACleanup();
-		return ClientSocket;
+		printf("TCPServer class accept failed with error: %d\n", WSAGetLastError());
+		//closesocket(ListenSocket);
+		//WSACleanup();
+		//return ClientSocket;
+		//WaitForConnect();
+
 	}
 	return ClientSocket;
 	// No longer need server socket
 	//closesocket(ListenSocket);
 }
 
-void TcpServer::Run(char* port) {
+void TcpServer::Run() {
 	printf("Server");
 
 
-	Initialize(myport);
+	Initialize();
 
 	int id = 0;
 	while (true) {
 		SOCKET sc = WaitForConnect();
+
+
 		std::thread* x = new std::thread(&ClientHandlerServer::Run, ClientHandlerServer(sc, ++id));
-		x->join();
+		
 
 	}
 }

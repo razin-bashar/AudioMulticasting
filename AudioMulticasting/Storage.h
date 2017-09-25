@@ -1,19 +1,23 @@
 #pragma once
 #include "Packet.h"
+#include "CircularArray.h"
 #include <queue>
 #pragma warning(disable:4996)
-
 class Storage
 {
 private:
 	static bool instanceFlag;
 	static Storage *single;
-	Packet CapturedAudioData[10000];
+
+	
 	int size;
 	Storage()
 	{
 		ip = getMyIp();
+		Buffer = new CircularArray();
 		size = 0;
+		lowbitrate = 0;
+		
 	}
 
 public:
@@ -23,8 +27,9 @@ public:
 	char* cport;
 	char* ip;
 
-
-
+	CircularArray* Buffer;
+	bool SampleRateint32 = true;
+	int lowbitrate;
 
 	static Storage* getInstance();
 	char* getMyIp() {
@@ -42,8 +47,7 @@ public:
 		return szLocalIP;
 	}
 
-	void addAudioData(Packet data);
-	Packet getAudioData(int id);
+
 	~Storage()
 	{
 		instanceFlag = false;

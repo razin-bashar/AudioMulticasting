@@ -1,5 +1,5 @@
 #pragma once
-#include "OutputDevice.h"
+#include "Common.h"
 
 class PacketReceiver
 {
@@ -10,17 +10,17 @@ private:
 	struct addrinfo *result = NULL, *ptr = NULL, hints;
 	struct sockaddr_in Remaddr;
 	struct sockaddr_in server;
-	OutputDevice* outputDevice;
+
 public:
 
 
-	PacketReceiver();
+	PacketReceiver(char* ip, char* port);
 	int Connect();
 	int OpenUdpConnection(char* ip, int port);
 	int OpenTcpConnection(char* ip, char* port);
 	void tcpReceiver();
 	void udpReceiver();
-	void parse(long *ik, long *dk, BYTE* datak, BYTE* recvdata);
+	void parse(long &ik, long &dk, BYTE* datak, BYTE* recvdata);
 	~PacketReceiver();
 };
 

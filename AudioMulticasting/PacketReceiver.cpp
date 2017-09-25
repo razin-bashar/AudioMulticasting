@@ -2,9 +2,10 @@
 #include "PacketReceiver.h"
 
 
-PacketReceiver::PacketReceiver()
+PacketReceiver::PacketReceiver(char* ip, char* port)
 {
-	outputDevice = OutputDevice::getInstance();
+	OpenTcpConnection(ip, port);
+	Connect();
 }
 
 int PacketReceiver::OpenUdpConnection(char* ip, int port){
@@ -46,29 +47,49 @@ int PacketReceiver::OpenUdpConnection(char* ip, int port){
 	Remaddr.sin_port = htons(port);
 	inet_pton(AF_INET, ip, &(Remaddr.sin_addr));
 }
-void PacketReceiver::parse(long *ik, long *dk, BYTE* datak, BYTE* recvdata){
+void PacketReceiver::parse(long &ik, long &dk, BYTE* datak, BYTE* recvdata){
 
 	int s1 = sizeof(long);
+
 	int s3 = sizeof(long);
+
 
 	BYTE* ikc = new BYTE[s1];
 	BYTE* dkc = new BYTE[s3];
 
 
-	int i, j, k;
-	for (i = 0; i < s1; i++){
-		ikc[i] = recvdata[i + 1];
-	}
-	ik = (long*)ikc;
+	int i = 0, j = 0, k = 0;
+	if (recvdata[i] == 'i'){
+		BYTE a, b, c;
+		for (i = 0; i < s1; i++){
+			a = recvdata[i + 1];
+			ikc[i] = a;
+		}
+		ik = *(long*)ikc;
+		if (recvdata[(i + 1) + j] == 'l'){
+			for (j = 0; j < s3; j++){
+				b = recvdata[(i + 1) + j + 1];
+				dkc[j] = b;
+			}
+			dk = *(long*)dkc;
+			if (recvdata[(i + 1) + (j + 1) + k] == 'd'){
 
-	for (j = 0; i < s3; j++){
-		dkc[j] = recvdata[(i + 1) + j + 1];
+				for (k = 0; k < dk; k++){
+					c = recvdata[(i + 1) + (j + 1) + k + 1];
+					datak[k] = c;
+				}
+			}
+			else{
+				return;
+			}
+		}
+		else{
+			return;
+		}
 	}
-	dk = (long*)dkc;
-	for (k = 0; k < *dk; k++){
-		datak[k] = recvdata[(i + 1) + (j + 1) + k + 1];
+	else{
+		return;
 	}
-
 }
 int PacketReceiver::Connect(){
 	// Attempt to connect to an address until one succeeds
@@ -128,33 +149,37 @@ void PacketReceiver::tcpReceiver(){
 	long packetid = 0;
 	int iResult;
 	char fresult[4000];
-	long id, len;
-	long* idp = NULL, *lenp = NULL;
-	BYTE * datak = new BYTE[2048];
+	long id = 0, len = 0;
+	BYTE * datak = new BYTE[4000];
+
 	while (true){
 		memset(fresult, 0, 4000);
-		iResult = sendto(ConnectSocket, (char*)packetid, sizeof(packetid), 0, (sockaddr*)&Remaddr, sizeof(Remaddr));
+		memset(datak, 0, 4000);
+		iResult = send(ConnectSocket, (char*)&packetid, sizeof(long), 0);
 		if (iResult == SOCKET_ERROR) {
 			printf("send failed with error: %d\n", WSAGetLastError());
 			closesocket(ConnectSocket);
 			WSACleanup();
 			return;
 		}
-		iResult = recv(ConnectSocket, fresult, 2048, 0);
-		if (iResult>0){
-			parse(idp, lenp, datak, (BYTE*)fresult);
 
-			id = *idp;
-			len = *lenp;
+		if (packetid == 188){
+			printf("\nID = %d\n", id);
+		}
+		iResult = recv(ConnectSocket, fresult, 4000, 0);
+		if (iResult>1){
+			parse(id, len, datak, (BYTE*)fresult);
+
+
 			if (id < 0){
-				delete datak;
+				delete[] datak;
 				return;
 			}
 			if (id == packetid)packetid++;
 			else packetid = id + 1;
-			outputDevice->UpdateBuffer(true, OutputDataFrame((BYTE*)datak, len));
-			delete idp;
-			delete lenp;
+		
+			printf("\nID = %d\n", id);
+
 		}
 	}
 	delete datak;
@@ -170,7 +195,7 @@ void PacketReceiver::udpReceiver(){
 		iResult = recvfrom(ConnectSocket, fresult, 2048, 0, (sockaddr*)&Remaddr, &addlen);
 		if (iResult > 0) {
 
-			outputDevice->UpdateBuffer(true, OutputDataFrame((BYTE*)fresult, 1920));
+			//outputDevice->UpdateBuffer(true, new  OutputDataFrame((BYTE*)fresult, 1920));
 		}
 
 	}

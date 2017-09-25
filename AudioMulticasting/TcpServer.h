@@ -6,7 +6,7 @@
 class TcpServer
 {
 private:
-	char* myport;
+	char* port;
 	WSADATA wsaData;
 	SOCKET ListenSocket = INVALID_SOCKET;
 	SOCKET ClientSocket = INVALID_SOCKET;
@@ -17,10 +17,10 @@ private:
 	struct addrinfo *result = NULL;
 	struct addrinfo hints;
 public:
-	TcpServer();
-	int Initialize(char* port);
+	TcpServer(char* pport);
+	int Initialize();
 	SOCKET WaitForConnect();
-	void Run(char* port);
+	void Run();
 	~TcpServer();
 };
 
