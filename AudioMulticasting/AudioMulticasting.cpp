@@ -2,27 +2,34 @@
 //
 
 #include "stdafx.h"
-#include "Common.h"
 #include <initguid.h>
+#include "TcpServer.h"
+#include "Common.h"
+#include "Config.h"
+#include "Log.h"
+#include "CleanUp.h"
+
+#include "WASAPIRenderer.h"
+#include <Strsafe.h>
+#include "Storage.h"
+#include "Packet.h"
+
+
+
+#include <MMDeviceAPI.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <stdio.h>
 #include <mmsystem.h>
-#include <mmdeviceapi.h>
+
 
 #include <stdlib.h>  
 #include <audioclient.h>
 #include <avrt.h>
-#include <functiondiscoverykeys_devpkey.h>
-#include <thread>
-#define DEFAULT_FILE L"loopback-capture.wav"
-#define LOG(format, ...) wprintf(format L"\n", __VA_ARGS__)
-#define ERR(format, ...) LOG(L"Error: " format, __VA_ARGS__)
-#define BUFSIZE 20000
 
-void usage(LPCWSTR exe);
-HRESULT get_default_device(IMMDevice **ppMMDevice);
-HRESULT list_devices();
-HRESULT get_specific_device(LPCWSTR szLongName, IMMDevice **ppMMDevice);
-HRESULT open_file(LPCWSTR szFileName, HMMIO *phFile);
+#include <thread>
+
+
+
 int do_everything(int argc, LPCWSTR argv[]);
 DWORD WINAPI LoopbackCaptureThreadFunction(LPVOID pContext);
 HRESULT WriteWaveHeader(HMMIO hFile, LPCWAVEFORMATEX pwfx, MMCKINFO *pckRIFF, MMCKINFO *pckData);
@@ -35,150 +42,8 @@ HRESULT LoopbackCapture(
 	HANDLE hStopEvent,
 	PUINT32 pnFrames
 	);
-HRESULT InitiateOutputDevice();
-void PlayRecord();
-
-WAVEFORMATEX pFormat;
-UINT32 sampleRate = 48000;
-char waveIn[BUFSIZE];
-WAVEHDR WaveHdr;
-HWAVEOUT hWaveOut;
 
 
-class CPrefs {
-public:
-	IMMDevice *m_pMMDevice;
-	HMMIO m_hFile;
-	bool m_bInt16;
-	PWAVEFORMATEX m_pwfx;
-	LPCWSTR m_szFilename;
-
-	// set hr to S_FALSE to abort but return success
-	CPrefs(int argc, LPCWSTR argv[], HRESULT &hr);
-	~CPrefs();
-
-};
-// cleanup.h
-#pragma region clean
-class AudioClientStopOnExit {
-public:
-	AudioClientStopOnExit(IAudioClient *p) : m_p(p) {}
-	~AudioClientStopOnExit() {
-		HRESULT hr = m_p->Stop();
-		if (FAILED(hr)) {
-			ERR(L"IAudioClient::Stop failed: hr = 0x%08x", hr);
-		}
-	}
-
-private:
-	IAudioClient *m_p;
-};
-
-class AvRevertMmThreadCharacteristicsOnExit {
-public:
-	AvRevertMmThreadCharacteristicsOnExit(HANDLE hTask) : m_hTask(hTask) {}
-	~AvRevertMmThreadCharacteristicsOnExit() {
-		if (!AvRevertMmThreadCharacteristics(m_hTask)) {
-			ERR(L"AvRevertMmThreadCharacteristics failed: last error is %d", GetLastError());
-		}
-	}
-private:
-	HANDLE m_hTask;
-};
-
-class CancelWaitableTimerOnExit {
-public:
-	CancelWaitableTimerOnExit(HANDLE h) : m_h(h) {}
-	~CancelWaitableTimerOnExit() {
-		if (!CancelWaitableTimer(m_h)) {
-			ERR(L"CancelWaitableTimer failed: last error is %d", GetLastError());
-		}
-	}
-private:
-	HANDLE m_h;
-};
-
-class CloseHandleOnExit {
-public:
-	CloseHandleOnExit(HANDLE h) : m_h(h) {}
-	~CloseHandleOnExit() {
-		if (!CloseHandle(m_h)) {
-			ERR(L"CloseHandle failed: last error is %d", GetLastError());
-		}
-	}
-
-private:
-	HANDLE m_h;
-};
-
-class CoTaskMemFreeOnExit {
-public:
-	CoTaskMemFreeOnExit(PVOID p) : m_p(p) {}
-	~CoTaskMemFreeOnExit() {
-		CoTaskMemFree(m_p);
-	}
-
-private:
-	PVOID m_p;
-};
-
-class CoUninitializeOnExit {
-public:
-	~CoUninitializeOnExit() {
-		CoUninitialize();
-	}
-};
-
-class PropVariantClearOnExit {
-public:
-	PropVariantClearOnExit(PROPVARIANT *p) : m_p(p) {}
-	~PropVariantClearOnExit() {
-		HRESULT hr = PropVariantClear(m_p);
-		if (FAILED(hr)) {
-			ERR(L"PropVariantClear failed: hr = 0x%08x", hr);
-		}
-	}
-
-private:
-	PROPVARIANT *m_p;
-};
-
-class ReleaseOnExit {
-public:
-	ReleaseOnExit(IUnknown *p) : m_p(p) {}
-	~ReleaseOnExit() {
-		m_p->Release();
-	}
-
-private:
-	IUnknown *m_p;
-};
-
-class SetEventOnExit {
-public:
-	SetEventOnExit(HANDLE h) : m_h(h) {}
-	~SetEventOnExit() {
-		if (!SetEvent(m_h)) {
-			ERR(L"SetEvent failed: last error is %d", GetLastError());
-		}
-	}
-private:
-	HANDLE m_h;
-};
-
-class WaitForSingleObjectOnExit {
-public:
-	WaitForSingleObjectOnExit(HANDLE h) : m_h(h) {}
-	~WaitForSingleObjectOnExit() {
-		DWORD dwWaitResult = WaitForSingleObject(m_h, INFINITE);
-		if (WAIT_OBJECT_0 != dwWaitResult) {
-			ERR(L"WaitForSingleObject returned unexpected result 0x%08x, last error is %d", dwWaitResult, GetLastError());
-		}
-	}
-
-private:
-	HANDLE m_h;
-};
 
 struct LoopbackCaptureThreadFunctionArguments {
 	IMMDevice *pMMDevice;
@@ -190,12 +55,29 @@ struct LoopbackCaptureThreadFunctionArguments {
 	HRESULT hr;
 };
 
-#pragma endregion
+bool UseConsoleDevice = false;
+bool UseCommunicationsDevice = false;
+bool UseMultimediaDevice = false;
+LPCWSTR OutputEndpoint = NULL;
+
 
 int _cdecl wmain(int argc, LPCWSTR argv[])
 {
 
-	//std::thread server(&IndependentServer::UdpRun, IndependentServer());
+	int SampleRateChoice, lowbitrate;
+	wprintf(L"Please Enter The SampleRate Either 32 or 16\n");
+	scanf("%d", &SampleRateChoice);
+	Storage* s = Storage::getInstance();
+	if (SampleRateChoice == 16) s->SampleRateint32 = false;
+	else s->SampleRateint32 = true;
+
+
+	printf("\nWant Low press 3\n");
+
+	scanf("%d", &s->lowbitrate);
+
+	char* port = "27110";
+	std::thread server(&TcpServer::Run, TcpServer(port));
 	//	std::thread client(&IndependentClient::UdpRun, IndependentClient());
 	/*Sleep(10000);
 	AudioChatRoomController AR1;
@@ -220,7 +102,7 @@ int _cdecl wmain(int argc, LPCWSTR argv[])
 
 	do_everything(3, argv1);
 
-	//server.join();
+	server.join();
 	//	client.join();
 
 }
@@ -237,7 +119,7 @@ int do_everything(int argc, LPCWSTR argv[]) {
 
 
 	// parse command line
-	CPrefs prefs(argc, argv, hr);
+	Config prefs(argc, argv, hr);
 	if (FAILED(hr)) {
 		ERR(L"CPrefs::CPrefs constructor failed: hr = 0x%08x", hr);
 		return -__LINE__;
@@ -267,7 +149,7 @@ int do_everything(int argc, LPCWSTR argv[]) {
 	LoopbackCaptureThreadFunctionArguments threadArgs;
 	threadArgs.hr = E_UNEXPECTED; // thread will overwrite this
 	threadArgs.pMMDevice = prefs.m_pMMDevice;
-	threadArgs.bInt16 = prefs.m_bInt16;
+	threadArgs.bInt16 = Storage::getInstance()->SampleRateint32;
 	threadArgs.hFile = prefs.m_hFile;
 	threadArgs.hStartedEvent = hStartedEvent;
 	threadArgs.hStopEvent = hStopEvent;
@@ -437,444 +319,6 @@ int do_everything(int argc, LPCWSTR argv[]) {
 
 	return 0;
 }
-void usage(LPCWSTR exe) {
-	LOG(
-		L"%ls -?\n"
-		L"%ls --list-devices\n"
-		L"%ls [--device \"Device long name\"] [--file \"file name\"] [--int-16]\n"
-		L"\n"
-		L"    -? prints this message.\n"
-		L"    --list-devices displays the long names of all active playback devices.\n"
-		L"    --device captures from the specified device (default if omitted)\n"
-		L"    --file saves the output to a file (%ls if omitted)\n"
-		L"    --int-16 attempts to coerce data to 16-bit integer format",
-		exe, exe, exe, DEFAULT_FILE
-		);
-}
-
-CPrefs::CPrefs(int argc, LPCWSTR argv[], HRESULT &hr)
-: m_pMMDevice(NULL)
-, m_hFile(NULL)
-, m_bInt16(false)
-, m_pwfx(NULL)
-, m_szFilename(NULL)
-{
-	switch (argc) {
-	case 2:
-		if (0 == _wcsicmp(argv[1], L"-?") || 0 == _wcsicmp(argv[1], L"/?")) {
-			// print usage but don't actually capture
-			hr = S_FALSE;
-			usage(argv[0]);
-			return;
-		}
-		else if (0 == _wcsicmp(argv[1], L"--list-devices")) {
-			// list the devices but don't actually capture
-			hr = list_devices();
-
-			// don't actually play
-			if (S_OK == hr) {
-				hr = S_FALSE;
-				return;
-			}
-		}
-		// intentional fallthrough
-
-	default:
-		// loop through arguments and parse them
-		for (int i = 1; i < argc; i++) {
-
-			// --device
-			if (0 == _wcsicmp(argv[i], L"--device")) {
-				if (NULL != m_pMMDevice) {
-					ERR(L"%s", L"Only one --device switch is allowed");
-					hr = E_INVALIDARG;
-					return;
-				}
-
-				if (i++ == argc) {
-					ERR(L"%s", L"--device switch requires an argument");
-					hr = E_INVALIDARG;
-					return;
-				}
-
-				hr = get_specific_device(argv[i], &m_pMMDevice);
-				if (FAILED(hr)) {
-					return;
-				}
-
-				continue;
-			}
-
-			// --file
-			if (0 == _wcsicmp(argv[i], L"--file")) {
-				if (NULL != m_szFilename) {
-					ERR(L"%s", L"Only one --file switch is allowed");
-					hr = E_INVALIDARG;
-					return;
-				}
-
-				if (i++ == argc) {
-					ERR(L"%s", L"--file switch requires an argument");
-					hr = E_INVALIDARG;
-					return;
-				}
-
-				m_szFilename = argv[i];
-				continue;
-			}
-
-			// --int-16
-			if (0 == _wcsicmp(argv[i], L"--int-16")) {
-				if (m_bInt16) {
-					ERR(L"%s", L"Only one --int-16 switch is allowed");
-					hr = E_INVALIDARG;
-					return;
-				}
-
-				m_bInt16 = true;
-				continue;
-			}
-
-			ERR(L"Invalid argument %ls", argv[i]);
-			hr = E_INVALIDARG;
-			return;
-		}
-
-		// open default device if not specified
-		if (NULL == m_pMMDevice) {
-			hr = get_default_device(&m_pMMDevice);
-			if (FAILED(hr)) {
-				return;
-			}
-		}
-
-		// if no filename specified, use default
-		if (NULL == m_szFilename) {
-			m_szFilename = DEFAULT_FILE;
-		}
-
-		// open file
-		hr = open_file(m_szFilename, &m_hFile);
-		if (FAILED(hr)) {
-			return;
-		}
-	}
-}
-
-CPrefs::~CPrefs() {
-	if (NULL != m_pMMDevice) {
-		m_pMMDevice->Release();
-	}
-
-	if (NULL != m_hFile) {
-		mmioClose(m_hFile, 0);
-	}
-
-	if (NULL != m_pwfx) {
-		CoTaskMemFree(m_pwfx);
-	}
-}
-
-HRESULT get_default_device(IMMDevice **ppMMDevice) {
-	HRESULT hr = S_OK;
-	IMMDeviceEnumerator *pMMDeviceEnumerator;
-
-	// activate a device enumerator
-	hr = CoCreateInstance(
-		__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL,
-		__uuidof(IMMDeviceEnumerator),
-		(void**)&pMMDeviceEnumerator
-		);
-	if (FAILED(hr)) {
-		ERR(L"CoCreateInstance(IMMDeviceEnumerator) failed: hr = 0x%08x", hr);
-		return hr;
-	}
-	ReleaseOnExit releaseMMDeviceEnumerator(pMMDeviceEnumerator);
-
-	// get the default render endpoint
-	hr = pMMDeviceEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, ppMMDevice);
-	if (FAILED(hr)) {
-		ERR(L"IMMDeviceEnumerator::GetDefaultAudioEndpoint failed: hr = 0x%08x", hr);
-		return hr;
-	}
-
-	return S_OK;
-}
-
-HRESULT list_devices() {
-	HRESULT hr = S_OK;
-
-	// get an enumerator
-	IMMDeviceEnumerator *pMMDeviceEnumerator;
-
-	hr = CoCreateInstance(
-		__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL,
-		__uuidof(IMMDeviceEnumerator),
-		(void**)&pMMDeviceEnumerator
-		);
-	if (FAILED(hr)) {
-		ERR(L"CoCreateInstance(IMMDeviceEnumerator) failed: hr = 0x%08x", hr);
-		return hr;
-	}
-	ReleaseOnExit releaseMMDeviceEnumerator(pMMDeviceEnumerator);
-
-	IMMDeviceCollection *pMMDeviceCollection;
-
-	// get all the active render endpoints
-	hr = pMMDeviceEnumerator->EnumAudioEndpoints(
-		eRender, DEVICE_STATE_ACTIVE, &pMMDeviceCollection
-		);
-	if (FAILED(hr)) {
-		ERR(L"IMMDeviceEnumerator::EnumAudioEndpoints failed: hr = 0x%08x", hr);
-		return hr;
-	}
-	ReleaseOnExit releaseMMDeviceCollection(pMMDeviceCollection);
-
-	UINT count;
-	hr = pMMDeviceCollection->GetCount(&count);
-	if (FAILED(hr)) {
-		ERR(L"IMMDeviceCollection::GetCount failed: hr = 0x%08x", hr);
-		return hr;
-	}
-	LOG(L"Active render endpoints found: %u", count);
-
-	for (UINT i = 0; i < count; i++) {
-		IMMDevice *pMMDevice;
-
-		// get the "n"th device
-		hr = pMMDeviceCollection->Item(i, &pMMDevice);
-		if (FAILED(hr)) {
-			ERR(L"IMMDeviceCollection::Item failed: hr = 0x%08x", hr);
-			return hr;
-		}
-		ReleaseOnExit releaseMMDevice(pMMDevice);
-
-		// open the property store on that device
-		IPropertyStore *pPropertyStore;
-		hr = pMMDevice->OpenPropertyStore(STGM_READ, &pPropertyStore);
-		if (FAILED(hr)) {
-			ERR(L"IMMDevice::OpenPropertyStore failed: hr = 0x%08x", hr);
-			return hr;
-		}
-		ReleaseOnExit releasePropertyStore(pPropertyStore);
-
-		// get the long name property
-		PROPVARIANT pv; PropVariantInit(&pv);
-		hr = pPropertyStore->GetValue(PKEY_Device_FriendlyName, &pv);
-		if (FAILED(hr)) {
-			ERR(L"IPropertyStore::GetValue failed: hr = 0x%08x", hr);
-			return hr;
-		}
-		PropVariantClearOnExit clearPv(&pv);
-
-		if (VT_LPWSTR != pv.vt) {
-			ERR(L"PKEY_Device_FriendlyName variant type is %u - expected VT_LPWSTR", pv.vt);
-			return E_UNEXPECTED;
-		}
-
-		LOG(L"    %ls", pv.pwszVal);
-	}
-
-	return S_OK;
-}
-
-HRESULT get_specific_device(LPCWSTR szLongName, IMMDevice **ppMMDevice) {
-	HRESULT hr = S_OK;
-
-	*ppMMDevice = NULL;
-
-	// get an enumerator
-	IMMDeviceEnumerator *pMMDeviceEnumerator;
-
-	hr = CoCreateInstance(
-		__uuidof(MMDeviceEnumerator), NULL, CLSCTX_ALL,
-		__uuidof(IMMDeviceEnumerator),
-		(void**)&pMMDeviceEnumerator
-		);
-	if (FAILED(hr)) {
-		ERR(L"CoCreateInstance(IMMDeviceEnumerator) failed: hr = 0x%08x", hr);
-		return hr;
-	}
-	ReleaseOnExit releaseMMDeviceEnumerator(pMMDeviceEnumerator);
-
-	IMMDeviceCollection *pMMDeviceCollection;
-
-	// get all the active render endpoints
-	hr = pMMDeviceEnumerator->EnumAudioEndpoints(
-		eRender, DEVICE_STATE_ACTIVE, &pMMDeviceCollection
-		);
-	if (FAILED(hr)) {
-		ERR(L"IMMDeviceEnumerator::EnumAudioEndpoints failed: hr = 0x%08x", hr);
-		return hr;
-	}
-	ReleaseOnExit releaseMMDeviceCollection(pMMDeviceCollection);
-
-	UINT count;
-	hr = pMMDeviceCollection->GetCount(&count);
-	if (FAILED(hr)) {
-		ERR(L"IMMDeviceCollection::GetCount failed: hr = 0x%08x", hr);
-		return hr;
-	}
-
-	for (UINT i = 0; i < count; i++) {
-		IMMDevice *pMMDevice;
-
-		// get the "n"th device
-		hr = pMMDeviceCollection->Item(i, &pMMDevice);
-		if (FAILED(hr)) {
-			ERR(L"IMMDeviceCollection::Item failed: hr = 0x%08x", hr);
-			return hr;
-		}
-		ReleaseOnExit releaseMMDevice(pMMDevice);
-
-		// open the property store on that device
-		IPropertyStore *pPropertyStore;
-		hr = pMMDevice->OpenPropertyStore(STGM_READ, &pPropertyStore);
-		if (FAILED(hr)) {
-			ERR(L"IMMDevice::OpenPropertyStore failed: hr = 0x%08x", hr);
-			return hr;
-		}
-		ReleaseOnExit releasePropertyStore(pPropertyStore);
-
-		// get the long name property
-		PROPVARIANT pv; PropVariantInit(&pv);
-		hr = pPropertyStore->GetValue(PKEY_Device_FriendlyName, &pv);
-		if (FAILED(hr)) {
-			ERR(L"IPropertyStore::GetValue failed: hr = 0x%08x", hr);
-			return hr;
-		}
-		PropVariantClearOnExit clearPv(&pv);
-
-		if (VT_LPWSTR != pv.vt) {
-			ERR(L"PKEY_Device_FriendlyName variant type is %u - expected VT_LPWSTR", pv.vt);
-			return E_UNEXPECTED;
-		}
-
-		// is it a match?
-		if (0 == _wcsicmp(pv.pwszVal, szLongName)) {
-			// did we already find it?
-			if (NULL == *ppMMDevice) {
-				*ppMMDevice = pMMDevice;
-				pMMDevice->AddRef();
-			}
-			else {
-				ERR(L"Found (at least) two devices named %ls", szLongName);
-				return E_UNEXPECTED;
-			}
-		}
-	}
-
-	if (NULL == *ppMMDevice) {
-		ERR(L"Could not find a device named %ls", szLongName);
-		return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
-	}
-
-	return S_OK;
-}
-
-HRESULT open_file(LPCWSTR szFileName, HMMIO *phFile) {
-	MMIOINFO mi = { 0 };
-
-	*phFile = mmioOpen(
-		// some flags cause mmioOpen write to this buffer
-		// but not any that we're using
-		const_cast<LPWSTR>(szFileName),
-		&mi,
-		MMIO_WRITE | MMIO_CREATE
-		);
-
-	if (NULL == *phFile) {
-		ERR(L"mmioOpen(\"%ls\", ...) failed. wErrorRet == %u", szFileName, mi.wErrorRet);
-		return E_FAIL;
-	}
-
-	return S_OK;
-}
-
-
-
-//void CALLBACK VoicePlayNotification(HWAVEIN hwi, UINT uMsg, DWORD dwInstance, DWORD dwParam1, DWORD dwParam2)
-//{
-//
-//	try {
-//		//char* data = reinterpret_cast<char*>(dwInstance);
-//		/*if (!isRunning) {
-//		Logger("VoiceRecordNotification without enter");
-//		return;
-//		}*/
-//
-//		switch (uMsg)
-//		{
-//			case WOM_DONE:
-//						{
-//
-//
-//						}
-//						break;
-//			case WOM_CLOSE:
-//						printf("voicePlayNotification with WIM_CLOSE");
-//						break;
-//			case WOM_OPEN:
-//						printf("voicePlayNotification with WIM_OPEN");
-//						break;
-//		}
-//	}
-//	catch (int e) {
-//		printf("..........................................");
-//		return;
-//	}
-//	//Logger("VoiceRecordNotification exit");
-//}
-//
-//
-//
-//void PlayRecord()
-//{
-//
-//	waveOutWrite(hWaveOut, &WaveHdr, sizeof(WaveHdr)); // Playing the data
-//
-//}
-//
-//
-//HRESULT InitiateOutputDevice(WAVEFORMATEX* ex){
-//
-//	//pEx->SubFormat = KSDATAFORMAT_SUBTYPE_PCM;
-//	//pEx->Samples.wValidBitsPerSample = 16;
-//
-//	//pwfx->nChannels = 2;
-//	//pwfx->wBitsPerSample = 16;
-//	//pwfx->nBlockAlign = pwfx->nChannels * pwfx->wBitsPerSample / 8;
-//	//pwfx->nAvgBytesPerSec = pwfx->nBlockAlign * pwfx->nSamplesPerSec;
-//
-//
-//
-//
-//	pFormat.wFormatTag = ex->wFormatTag;
-//	pFormat.nChannels = ex->nChannels;
-//	pFormat.wBitsPerSample = ex->wBitsPerSample;
-//	pFormat.nSamplesPerSec = ex->nSamplesPerSec;
-//	pFormat.nBlockAlign = ex->nBlockAlign;
-//	pFormat.nAvgBytesPerSec = ex->nAvgBytesPerSec;
-//	pFormat.cbSize = ex->cbSize;
-//
-//
-//	WaveHdr.lpData = (LPSTR)waveIn;
-//	WaveHdr.dwBufferLength = BUFSIZE;
-//	WaveHdr.dwBytesRecorded = 0;
-//	WaveHdr.dwUser = 0L;
-//	WaveHdr.dwFlags = 0L;
-//	WaveHdr.dwLoops = 0L;
-//
-//
-//	HRESULT result = waveOutOpen(&hWaveOut, WAVE_MAPPER, &pFormat, 0L, 0L, WAVE_FORMAT_DIRECT);
-//
-//	//result = waveOutOpen(&hWaveOut, WAVE_MAPPER, &pFormat, (DWORD_PTR)VoicePlayNotification, (DWORD_PTR)WaveHdr.lpData, CALLBACK_FUNCTION);
-//	return result;
-//
-//
-//}
-
-
 
 
 DWORD WINAPI LoopbackCaptureThreadFunction(LPVOID pContext) {
@@ -900,12 +344,6 @@ DWORD WINAPI LoopbackCaptureThreadFunction(LPVOID pContext) {
 	return 0;
 }
 
-#include "WASAPIRenderer.h"
-#include <Strsafe.h>
-bool UseConsoleDevice=false;
-bool UseCommunicationsDevice=false;
-bool UseMultimediaDevice=false;
-LPCWSTR OutputEndpoint = NULL;
 template <class T> void SafeRelease(T **ppT)
 {
 	if (*ppT)
@@ -918,7 +356,9 @@ LPWSTR GetDeviceName(IMMDeviceCollection *DeviceCollection, UINT DeviceIndex)
 {
 	IMMDevice *device;
 	LPWSTR deviceId;
+	
 	HRESULT hr;
+
 
 	hr = DeviceCollection->Item(DeviceIndex, &device);
 	if (FAILED(hr))
@@ -932,6 +372,7 @@ LPWSTR GetDeviceName(IMMDeviceCollection *DeviceCollection, UINT DeviceIndex)
 		printf("Unable to get device %d id: %x\n", DeviceIndex, hr);
 		return NULL;
 	}
+
 
 	IPropertyStore *propertyStore;
 	hr = device->OpenPropertyStore(STGM_READ, &propertyStore);
@@ -981,7 +422,7 @@ bool PickDevice(IMMDevice **DeviceToUse, bool *IsDefaultDevice, ERole *DefaultDe
 	bool retValue = true;
 	IMMDeviceEnumerator *deviceEnumerator = NULL;
 	IMMDeviceCollection *deviceCollection = NULL;
-
+	IPropertyStore *propertyStore;
 	*IsDefaultDevice = false;   // Assume we're not using the default device.
 
 	hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&deviceEnumerator));
@@ -1036,8 +477,8 @@ bool PickDevice(IMMDevice **DeviceToUse, bool *IsDefaultDevice, ERole *DefaultDe
 			free(deviceName);
 		}
 		wchar_t choice[10];
-		_getws_s(choice);   // Note: Using the safe CRT version of _getws.
-
+		//_getws_s(choice);   // Note: Using the safe CRT version of _getws.
+		wscanf(L"%s", choice);
 		long deviceIndex;
 		wchar_t *endPointer;
 
@@ -1067,6 +508,13 @@ bool PickDevice(IMMDevice **DeviceToUse, bool *IsDefaultDevice, ERole *DefaultDe
 				retValue = false;
 				goto Exit;
 			}
+			//##########################################################################
+
+
+
+			//###########################################################################
+
+
 			break;
 		}
 	}
@@ -1116,16 +564,21 @@ Exit:
 	return retValue;
 }
 
+
+
+
+
 HRESULT LoopbackCapture(
 	IMMDevice *pMMDevice,
 	HMMIO hFile,
-	bool bInt16,
+	bool bInt32,
 	HANDLE hStartedEvent,
 	HANDLE hStopEvent,
 	PUINT32 pnFrames
 	) {
 	bool isDefaultDevice;
 	ERole role;
+	HRESULT hr;
 
 	if (!PickDevice(&pMMDevice, &isDefaultDevice, &role))
 	{
@@ -1133,39 +586,44 @@ HRESULT LoopbackCapture(
 		exit;
 	}
 
-	CWASAPIRenderer *renderer = new (std::nothrow) CWASAPIRenderer(pMMDevice, isDefaultDevice, role);
-	if (renderer == NULL)
-	{
-		printf("Unable to allocate renderer\n");
-		return -1;
-	}
+	//CWASAPIRenderer *renderer = new (std::nothrow) CWASAPIRenderer(pMMDevice, isDefaultDevice, role);
+	//if (renderer == NULL)
+	//{
+	//	printf("Unable to allocate renderer\n");
+	//	return -1;
+	//}
+	
+//	Packet
 
 	//9876
-	RenderBuffer *renderQueue =NULL;
-	RenderBuffer **currentBufferTail = &renderQueue;
-	int TargetLatency = 30;
-	if (renderer->Initialize(TargetLatency))
-	{
-		//
-		//  We've initialized the renderer.  Once we've done that, we know some information about the
-		//  mix format and we can allocate the buffer that we're going to render.
-		//
-		//
-		//  The buffer is going to contain "TargetDuration" seconds worth of PCM data.  That means 
-		//  we're going to have TargetDuration*samples/second frames multiplied by the frame size.
-		//
-	//	UINT32 renderBufferSizeInBytes = (renderer->BufferSizePerPeriod()  * renderer->FrameSize());
-	//	size_t renderDataLength = (renderer->SamplesPerSecond() * TargetDurationInSec * renderer->FrameSize()) + (renderBufferSizeInBytes - 1);
-	//	size_t renderBufferCount = renderDataLength / (renderBufferSizeInBytes);
-		//
-		//  Render buffer queue. Because we need to insert each buffer at the end of the linked list instead of at the head, 
-		//  we keep a pointer to a pointer to the variable which holds the tail of the current list in currentBufferTail.
-		//
-		RenderBuffer *renderQueue = NULL;
-		RenderBuffer **currentBufferTail = &renderQueue;
-	}
+	Storage* storage = Storage::getInstance();
+
+	//RenderBuffer *renderQueue =NULL;
+	//RenderBuffer **currentBufferTail = &renderQueue;
+	//int TargetLatency = 30;
+	//if (renderer->Initialize(TargetLatency))
+	//{
+	//	//
+	//	//  We've initialized the renderer.  Once we've done that, we know some information about the
+	//	//  mix format and we can allocate the buffer that we're going to render.
+	//	//
+	//	//
+	//	//  The buffer is going to contain "TargetDuration" seconds worth of PCM data.  That means 
+	//	//  we're going to have TargetDuration*samples/second frames multiplied by the frame size.
+	//	//
+	////	UINT32 renderBufferSizeInBytes = (renderer->BufferSizePerPeriod()  * renderer->FrameSize());
+	////	size_t renderDataLength = (renderer->SamplesPerSecond() * TargetDurationInSec * renderer->FrameSize()) + (renderBufferSizeInBytes - 1);
+	////	size_t renderBufferCount = renderDataLength / (renderBufferSizeInBytes);
+	//	//
+	//	//  Render buffer queue. Because we need to insert each buffer at the end of the linked list instead of at the head, 
+	//	//  we keep a pointer to a pointer to the variable which holds the tail of the current list in currentBufferTail.
+	//	//
+	//	RenderBuffer *renderQueue = NULL;
+	//	RenderBuffer **currentBufferTail = &renderQueue;
+	//}
 	
-	HRESULT hr;
+	
+
 	// activate an IAudioClient
 	IAudioClient *pAudioClient;
 	hr = pMMDevice->Activate(
@@ -1196,7 +654,7 @@ HRESULT LoopbackCapture(
 	}
 	CoTaskMemFreeOnExit freeMixFormat(pwfx);
 
-	if (bInt16) {
+	if (!bInt32) {
 		// coerce int-16 wave format
 		// can do this in-place since we're not changing the size of the format
 		// also, the engine will auto-convert from float to int for us
@@ -1236,6 +694,17 @@ HRESULT LoopbackCapture(
 			return E_UNEXPECTED;
 		}
 	}
+
+	if (storage->lowbitrate == 3){
+
+		pwfx->wFormatTag = WAVE_FORMAT_PCM;
+		pwfx->nChannels = 2;
+		pwfx->wBitsPerSample = 16;
+		pwfx->nSamplesPerSec = 8000;
+		pwfx->cbSize = 0;
+		pwfx->nBlockAlign = pwfx->nChannels * pwfx->wBitsPerSample / 8;
+		pwfx->nAvgBytesPerSec = pwfx->nBlockAlign * pwfx->nSamplesPerSec;
+	}
 	//InitiateOutputDevice(pwfx);
 	//RTCPlayer rtcplayer(pwfx);
 
@@ -1266,7 +735,7 @@ HRESULT LoopbackCapture(
 	// so we're going to do a timer-driven loop
 	hr = pAudioClient->Initialize(
 		AUDCLNT_SHAREMODE_SHARED,
-		AUDCLNT_STREAMFLAGS_LOOPBACK,
+		AUDCLNT_STREAMFLAGS_LOOPBACK | AUDCLNT_STREAMFLAGS_RATEADJUST | AUDCLNT_STREAMFLAGS_NOPERSIST,
 		0, 0, pwfx, 0
 		);
 	if (FAILED(hr)) {
@@ -1274,6 +743,7 @@ HRESULT LoopbackCapture(
 		return hr;
 	}
 
+	
 	// activate an IAudioCaptureClient
 	IAudioCaptureClient *pAudioCaptureClient;
 	hr = pAudioClient->GetService(
@@ -1286,6 +756,7 @@ HRESULT LoopbackCapture(
 	}
 	ReleaseOnExit releaseAudioCaptureClient(pAudioCaptureClient);
 
+	
 	// register with MMCSS
 	DWORD nTaskIndex = 0;
 	HANDLE hTask = AvSetMmThreadCharacteristics(L"Audio", &nTaskIndex);
@@ -1321,11 +792,18 @@ HRESULT LoopbackCapture(
 	}
 	AudioClientStopOnExit stopAudioClient(pAudioClient);
 
+	
 	SetEvent(hStartedEvent);
+
+
+
+
 
 	// loopback capture loop
 	HANDLE waitArray[2] = { hStopEvent, hWakeUp };
 	DWORD dwWaitResult;
+
+	int count = 0;
 
 	bool bDone = false;
 	bool bFirstPacket = true;
@@ -1375,9 +853,9 @@ HRESULT LoopbackCapture(
 
 
 
-			LONG lBytesWritten = mmioWrite(hFile, reinterpret_cast<PCHAR>(pData), lBytesToWrite);
-			mmioFlush(hFile, MMIO_EMPTYBUF);
-			printf("\n%d\n", lBytesWritten);
+			//LONG lBytesWritten = mmioWrite(hFile, reinterpret_cast<PCHAR>(pData), lBytesToWrite);
+			//mmioFlush(hFile, MMIO_EMPTYBUF);
+			//printf("\n%d\n", lBytesWritten);
 			//printf(reinterpret_cast<PCHAR>(pData));
 			//	rtcplayer.play(reinterpret_cast<PCHAR>(pData), lBytesToWrite);
 
@@ -1393,11 +871,12 @@ HRESULT LoopbackCapture(
 			else printf("\n%d\n", (unsigned char)pData[i]);
 			}*/
 
-			int str = strlen(reinterpret_cast<PCHAR>(pData));
+			//int str = strlen(reinterpret_cast<PCHAR>(pData));
 
 			//12345
 
-			RenderBuffer *renderBuffer = new (std::nothrow) RenderBuffer();
+
+		/*	RenderBuffer *renderBuffer = new (std::nothrow) RenderBuffer();
 			if (renderBuffer == NULL)
 			{
 				printf("Unable to allocate render buffer\n");
@@ -1412,12 +891,17 @@ HRESULT LoopbackCapture(
 			}
 			memcpy(renderBuffer->_Buffer, (BYTE*)reinterpret_cast<PCHAR>(pData), lBytesWritten);
 			*currentBufferTail = renderBuffer;
-			currentBufferTail = &renderBuffer->_Next;
+			currentBufferTail = &renderBuffer->_Next;*/
 
+		//	Packet*  packet;
+		//	Packet* pkt;
+		//	packet = new Packet(count++, (BYTE*)reinterpret_cast<PCHAR>(pData), lBytesWritten);
+		//	storage->addAudioData(packet);
+			Packet pp(count++, (BYTE*)reinterpret_cast<PCHAR>(pData), lBytesToWrite);
+			storage->Buffer->add(pp);
 
-
-			if (lBytesToWrite != lBytesWritten) {
-				ERR(L"mmioWrite wrote %u bytes on pass %u after %u frames: expected %u bytes", lBytesWritten, nPasses, *pnFrames, lBytesToWrite);
+			if (lBytesToWrite != lBytesToWrite) {
+				ERR(L"mmioWrite wrote %u bytes on pass %u after %u frames: expected %u bytes", lBytesToWrite, nPasses, *pnFrames, lBytesToWrite);
 				return E_UNEXPECTED;
 			}
 
@@ -1455,19 +939,18 @@ HRESULT LoopbackCapture(
 	} // capture loop
 
 
-	if (renderer->Start(renderQueue))
+	/*if (renderer->Start(renderQueue))
 	{
 		do
 		{
-			printf(".");
-			Sleep(1000);
+			printf(".");			Sleep(1000);
 		} while (true);
 		printf("\n");
 
 		renderer->Stop();
 		renderer->Shutdown();
 		SafeRelease(&renderer);
-	}
+	}*/
 
 	hr = FinishWaveFile(hFile, &ckData, &ckRIFF);
 	if (FAILED(hr)) {

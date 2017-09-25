@@ -39,18 +39,31 @@ public:
 		SampleType16BitPCM,
 	};
 
+	//------------------------
+	bool running = false;
+	//------------------------
+
+	HANDLE      _AudioSamplesReadyEvent;
+
 	CWASAPIRenderer(IMMDevice *Endpoint, bool EnableStreamSwitch, ERole EndpointRole);
 	bool Initialize(UINT32 EngineLatency);
 	void Shutdown();
 	bool Start(RenderBuffer *RenderBufferQueue);
 	void Stop();
-	WORD ChannelCount() { return _MixFormat->nChannels; }
-	UINT32 SamplesPerSecond() { return _MixFormat->nSamplesPerSec; }
-	UINT32 BytesPerSample() { return _MixFormat->wBitsPerSample / 8; }
-	RenderSampleType SampleType() { return _RenderSampleType; }
-	UINT32 FrameSize() { return _FrameSize; }
-	UINT32 BufferSize() { return _BufferSize; }
-	UINT32 BufferSizePerPeriod();
+
+
+	#pragma region Format
+		WORD ChannelCount() { return _MixFormat->nChannels; }
+		UINT32 SamplesPerSecond() { return _MixFormat->nSamplesPerSec; }
+		UINT32 BytesPerSample() { return _MixFormat->wBitsPerSample / 8; }
+		RenderSampleType SampleType() { return _RenderSampleType; }
+		UINT32 FrameSize() { return _FrameSize; }
+		UINT32 BufferSize() { return _BufferSize; }
+		UINT32 BufferSizePerPeriod();
+	#pragma endregion
+
+
+
 	STDMETHOD_(ULONG, AddRef)();
 	STDMETHOD_(ULONG, Release)();
 
@@ -66,7 +79,6 @@ private:
 
 	HANDLE      _RenderThread;
 	HANDLE      _ShutdownEvent;
-	HANDLE      _AudioSamplesReadyEvent;
 	WAVEFORMATEX *_MixFormat;
 	UINT32      _FrameSize;
 	RenderSampleType _RenderSampleType;
@@ -81,6 +93,7 @@ private:
 	static DWORD __stdcall WASAPIRenderThread(LPVOID Context);
 	DWORD CWASAPIRenderer::DoRenderThread();
 	//
+#pragma region StreamSwitch
 	//  Stream switch related members and methods.
 	//
 	bool                    _EnableStreamSwitch;
@@ -108,6 +121,8 @@ private:
 	STDMETHOD(OnDefaultDeviceChanged) (EDataFlow Flow, ERole Role, LPCWSTR NewDefaultDeviceId);
 	STDMETHOD(OnPropertyValueChanged) (LPCWSTR /*DeviceId*/, const PROPERTYKEY /*Key*/){ return S_OK; };
 
+
+#pragma endregion 
 	//
 	//  IUnknown
 	//

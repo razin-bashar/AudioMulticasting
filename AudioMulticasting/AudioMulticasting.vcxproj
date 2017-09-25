@@ -52,6 +52,7 @@
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;_LIB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
+      <RuntimeLibrary>MultiThreadedDebug</RuntimeLibrary>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -80,10 +81,12 @@
     <Text Include="ReadMe.txt" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="CircularArray.h" />
+    <ClInclude Include="CleanUp.h" />
     <ClInclude Include="ClientHandlerServer.h" />
     <ClInclude Include="Common.h" />
-    <ClInclude Include="OutputDataFrame.h" />
-    <ClInclude Include="OutputDevice.h" />
+    <ClInclude Include="Config.h" />
+    <ClInclude Include="Log.h" />
     <ClInclude Include="Packet.h" />
     <ClInclude Include="PacketReceiver.h" />
     <ClInclude Include="stdafx.h" />
@@ -94,9 +97,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AudioMulticasting.cpp" />
+    <ClCompile Include="CircularArray.cpp" />
     <ClCompile Include="ClientHandlerServer.cpp" />
-    <ClCompile Include="OutputDataFrame.cpp" />
-    <ClCompile Include="OutputDevice.cpp" />
+    <ClCompile Include="Config.cpp" />
     <ClCompile Include="Packet.cpp" />
     <ClCompile Include="PacketReceiver.cpp" />
     <ClCompile Include="stdafx.cpp">

@@ -4,14 +4,15 @@ class Packet
 {
 public:
 	long id;
-	BYTE* rawData;
+	BYTE rawData[4000];
 	long dataLength;
 	int time;
 	bool valid;
 	int count;
 	Packet();
 	Packet(long Id, BYTE* data, long length);
-	BYTE* toByte();
+	Packet(const Packet &p2);
+	BYTE* toByte(int* len);
 	~Packet();
 };
 

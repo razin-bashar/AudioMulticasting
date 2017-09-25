@@ -1,3 +1,4 @@
+#pragma region include
 #include "stdafx.h"
 #include "WASAPIRenderer.h"
 #define _CRT_SECURE_CPP_OVERLOAD_SECURE_NAMES 1
@@ -12,6 +13,8 @@
 #pragma warning(pop)
 #include <avrt.h>
 #include <assert.h>
+
+#pragma endregion
 
 bool DisableMMCSS = false;
 
@@ -310,6 +313,9 @@ void CWASAPIRenderer::Shutdown()
 //
 bool CWASAPIRenderer::Start(RenderBuffer *RenderBufferQueue)
 {
+
+	running = true;
+
 	HRESULT hr;
 
 	_RenderBufferQueue = RenderBufferQueue;
@@ -481,6 +487,9 @@ DWORD CWASAPIRenderer::DoRenderThread()
 			//
 			//  We need to provide the next buffer of samples to the audio renderer.
 			//
+
+			
+
 			BYTE *pData;
 			UINT32 padding;
 			UINT32 framesAvailable;
@@ -551,7 +560,7 @@ DWORD CWASAPIRenderer::DoRenderThread()
 	return 0;
 }
 
-
+#pragma region unimportant
 bool CWASAPIRenderer::InitializeStreamSwitch()
 {
 	HRESULT hr = _AudioClient->GetService(IID_PPV_ARGS(&_AudioSessionControl));
@@ -882,3 +891,4 @@ ULONG CWASAPIRenderer::Release()
 	}
 	return returnValue;
 }
+#pragma endregion
